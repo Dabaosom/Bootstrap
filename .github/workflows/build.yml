@@ -31,25 +31,90 @@ jobs:
             git clone --depth=1 https://github.com/roothide/theos.git $THEOS
             cd $THEOS && git submodule update --init --depth=1
           fi
-          echo '$THEOS=$THEOS' >> $GITHUB_ENV
+          echo 'THEOS=$THEOS' >> $GITHUB_ENV
           echo '$THEOS/bin' >> $GITHUB_PATH
 
-      - name: Download official Bootstrap strapfiles
+      - name: Prepare strapfiles (official Bootstrap release)
         run: |
-          # Fetch release page and extract strapfiles URL
           RELEASE_HTML="$(curl -sL https://github.com/roothide/Bootstrap/releases/latest)"
-          echo "$RELEASE_HTML" | grep -o 'href="[^"]*strapfiles[^"]*\.tar\.zst[^"]*"' | head -3
+          STRAP_URL="$(echo "$RELEASE_HTML" | grep -oP 'href="\K[^"]*strapfiles[^"]*\.tar\.zst[^"]*(?=")' | head -1)"
+          echo "Downloading strapfiles from: $STRAP_URL"
+          curl -sL "$STRAP_URL" -o bootstrap-strapfiles.tar.zst
+          ls -lh bootstrap-strapfiles.tar.zst
+          mkdir -p official_strapfiles
+          zstd -d bootstrap-strapfiles.tar.zst -o /tmp/strapfiles.tar
+          tar -xf /tmp/strapfiles.tar -C official_strapfiles/
+          ls official_strapfiles/
 
-          # Also try the releases API
-          API_RESP="$(curl -sL https://api.github.com/repos/roothide/Bootstrap/releases/latest)"
-          echo "API response length: $(echo "" | wc -c)"
-          echo "$API_RESP" | python3 -c "import sys,json; r=json.load(sys.stdin); [print(a['browser_download_url']) for a in r.get('assets',[]) if 'strapfiles' in a['name']]" 2>/dev/null || echo "Python parse failed"
+      - name: Patch resignList.plist with siriactionsd
+        run: |
+          if [ -f basebin/resignList.plist ]; then
+            echo "Using modified resignList from fork:"
+            cat basebin/resignList.plist
+            mkdir -p official_strapfiles/.jbroot
+            cp basebin/resignList.plist official_strapfiles/.jbroot/resignList.plist
+          fi
 
-      - name: Build Bootstrap .tipa (fallback)
+      - name: Build Bootstrap.app with xcodebuild
         run: |
           export THEOS=$HOME/theos
-          echo "Using strapfiles from submodule (basebin fork)"
-          make package
+
+          # Prepare strapfiles for Xcode resource copying
+          mkdir -p strapfiles/basebin
+          cp -a official_strapfiles/.jbroot/. strapfiles/basebin/ 2>/dev/null
+          cp -a official_strapfiles/Library/. strapfiles/Library/ 2>/dev/null
+          cp -a official_strapfiles/System/. strapfiles/System/ 2>/dev/null
+          cp -a official_strapfiles/usr/. strapfiles/usr/ 2>/dev/null
+          ls -la strapfiles/
+
+          # Build Xcode project directly (no theos make hooks)
+          xcodebuild -project Bootstrap.xcodeproj -scheme Bootstrap \
+            CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+            -configuration Debug -arch arm64 -sdk iphoneos \
+            -derivedDataPath .theos/DerivedData \
+            IPHONEOS_DEPLOYMENT_TARGET=15.0
+
+      - name: Package .tipa
+        run: |
+          export THEOS=$HOME/theos
+          THEOS_STAGING="$PWD/.theos/staging"
+          mkdir -p "$THEOS_STAGING/Applications/Bootstrap.app"
+          mkdir -p "$THEOS_STAGING/Applications/Bootstrap.app/.jbroot"
+
+          # Copy built app bundle
+          cp -a .theos/DerivedData/Build/Products/Debug-iphoneos/Bootstrap.app/. "$THEOS_STAGING/Applications/Bootstrap.app/" 2>/dev/null
+          if [ ! -f "$THEOS_STAGING/Applications/Bootstrap.app/Bootstrap" ]; then
+            cp -a .theos/DerivedData/Bootstrap-*.build/Build/Products/Bootstrap.app/. "$THEOS_STAGING/Applications/Bootstrap.app/" 2>/dev/null
+          fi
+
+          # Copy strapfiles into app bundle
+          cp -a strapfiles/.jbroot/. "$THEOS_STAGING/Applications/Bootstrap.app/.jbroot/"
+
+          ls -la "$THEOS_STAGING/Applications/Bootstrap.app/"
+
+          # Package using dm.pl
+          mkdir -p packages/
+          $THEOS/vendor/dm.pl/dm.pl \
+            -s "$THEOS_STAGING" \
+            -d "$PWD/packages/Bootstrap.tipa" \
+            -o Bootstrap \
+            -m 0x0150 \
+            -ver 2.2.1
+
+          # Check result
+          if [ -f packages/Bootstrap.tipa ]; then
+            SIZE=$(stat -f%z packages/Bootstrap.tipa 2>/dev/null || stat -c%s packages/Bootstrap.tipa 2>/dev/null)
+            echo "Bootstrap.tipa size: $SIZE bytes"
+          else
+            echo "dm.pl failed, trying zip fallback..."
+            mkdir -p Payload
+            cp -a "$THEOS_STAGING/Applications/Bootstrap.app" Payload/
+            cd packages
+            zip -r Bootstrap.tipa ../Payload
+            rm -rf ../Payload
+            cd ..
+          fi
+          ls -lh packages/Bootstrap.tipa
 
       - name: Upload .tipa
         if: success()
