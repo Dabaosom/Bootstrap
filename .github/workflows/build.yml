@@ -21,10 +21,14 @@ jobs:
       - name: Accept Xcode license
         run: sudo xcodebuild -license accept
 
-      - name: Install theos (roothide fork + submodules)
+      - name: Install dependencies (theos + ldid)
         run: |
+          # Install ldid for code signing in basebin build
+          brew install ldid
+
+          # Install theos (roothide fork + submodules)
           export THEOS=$HOME/theos
-          if [ -d "$THEOS" ] && [ -f "$THEOS/makefiles/schemes/ros.mk" ]; then
+          if [ -d "$THEOS" ] && [ -f "$THEOS/vendor/mod/roothide/package.mk" ]; then
             echo '$THEOS already has roothide scheme, skipping'
           else
             rm -rf "$THEOS"
@@ -36,36 +40,50 @@ jobs:
 
       - name: Build basebin (strapfiles)
         run: |
-          # Remove existing strapfiles/basebin to start clean
-          rm -rf strapfiles/basebin
           # Build basebin from submodule source
           cd basebin
           ./build.sh
           cd ..
-          # Move built basebin into strapfiles (this is what before-package would do)
+          # Move built basebin into strapfiles
           rm -rf strapfiles/basebin
           cp -a basebin/.build strapfiles/basebin
 
-      - name: Build Xcode project (without theos make)
+      - name: Build Xcode project (xcodebuild directly)
         run: |
           export THEOS=$HOME/theos
-          xcodebuild -project Bootstrap.xcodeproj -scheme Bootstrap CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO -configuration Debug -arch arm64 -sdk iphoneos TARGET_BUILD_DIR=$PWD/.theos/obj \
-            BUILD_LIBRARY_FOR_DISTRIBUTION=NO IPHONEOS_DEPLOYMENT_TARGET=15.0
+          # Build just the Bootstrap app (without theos clean/package)
+          xcodebuild -project Bootstrap.xcodeproj -scheme Bootstrap \
+            CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+            -configuration Debug -arch arm64 -sdk iphoneos
 
-      - name: Package as .tipa
+      - name: Package .tipa
+        id: package
         run: |
           export THEOS=$HOME/theos
+          # Find the built app bundle
+          BUILT_APP=
+          if [ -z "$BUILT_APP" ]; then
+            BUILT_APP=$(find ~/Library/Developer/Xcode/DerivedData -name "Bootstrap.app" -type d 2>/dev/null | head -1)
+          fi
+          echo "Built app: $BUILT_APP"
+          if [ -z "$BUILT_APP" ]; then
+            echo "ERROR: Bootstrap.app not found"
+            ls -la .theos/
+            ls ~/Library/Developer/Xcode/DerivedData/ | grep Bootstrap | head -5
+            exit 1
+          fi
+
+          # Create .tipa package
           mkdir -p packages/Payload
-          mkdir -p $THEOS_STAGING_DIR/Applications/Bootstrap.app
-
-          # Copy built app bundle
-          cp -a .theos/obj/Debug-iphoneos/Bootstrap.app packages/Payload/ 2>/dev/null || \
-            cp -a .theos/obj/Bootstrap.build/Release-iphoneos/Bootstrap.build/ProductPath/Applications/Bootstrap.app packages/Payload/ 2>/dev/null || \
-            echo "Looking for built app..."
-          ls -la packages/Payload/ 2>/dev/null || ls -la .theos/obj/ 2>/dev/null
+          cp -a "$BUILT_APP" packages/Payload/
+          mkdir -p packages/
+          cd packages
+          zip -r Bootstrap.tipa Payload/
+          cd ..
+          ls -la packages/Bootstrap.tipa
 
       - name: Upload .tipa
-        if: success()
+        if: success() && steps.package.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: Bootstrap.tipa
