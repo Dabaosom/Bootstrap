@@ -34,37 +34,44 @@ jobs:
           echo '$THEOS=$THEOS' >> $GITHUB_ENV
           echo '$THEOS/bin' >> $GITHUB_PATH
 
-      - name: Download official Bootstrap release (strapfiles)
+      - name: Download official Bootstrap strapfiles
         run: |
-          # Download latest official Bootstrap release to get pre-built strapfiles
-          curl -sL "https://api.github.com/repos/roothide/Bootstrap/releases/latest" | grep -o '"tag_name": "[^"]*"' | cut -d'"' -f4
-          ASSET_URL=$(curl -sL "https://api.github.com/repos/roothide/Bootstrap/releases/latest" | grep -o '"browser_download_url": "[^"]*"' | grep -v '.tipa' | grep -o 'https://[^"]*strapfiles[^"]*\.tar\.zst' | head -1)
+          # Get latest release info
+          curl -sL https://api.github.com/repos/roothide/Bootstrap/releases/latest > /tmp/release.json
+          TAG=$(node -e "console.log(JSON.parse(require('fs').readFileSync('/tmp/release.json','utf8')).tag_name)")
+          echo "Latest release: $TAG"
+          # Find strapfiles tarball
+          ASSET_URL=$(node -e "const r=JSON.parse(require('fs').readFileSync('/tmp/release.json','utf8')); const a=r.assets.find(x=>x.name.includes('strapfiles')); console.log(a?a.browser_download_url:'');")
           echo "Downloading: $ASSET_URL"
           curl -sL "$ASSET_URL" -o bootstrap-strapfiles.tar.zst
-          echo "Size: $(du -sh bootstrap-strapfiles.tar.zst)"
+          ls -lh bootstrap-strapfiles.tar.zst
           mkdir -p official_strapfiles
-          tar -xf bootstrap-strapfiles.tar.zst -C official_strapfiles/ 2>/dev/null || zstd -d bootstrap-strapfiles.tar.zst -o bootstrap-strapfiles.tar && tar -xf bootstrap-strapfiles.tar -C official_strapfiles/
-
-          # List what's in strapfiles
+          tar -xf bootstrap-strapfiles.tar.zst -C official_strapfiles/ 2>/dev/null || (zstd -d bootstrap-strapfiles.tar.zst -o /tmp/strapfiles.tar && tar -xf /tmp/strapfiles.tar -C official_strapfiles/)
           ls official_strapfiles/
+
+      - name: Patch resignList.plist with siriactionsd
+        run: |
+          # Our basebin fork has the modified resignList.plist
+          # Copy it into strapfiles/.jbroot
+          if [ -f basebin/resignList.plist ]; then
+            echo "Using modified resignList.plist from basebin fork:"
+            cat basebin/resignList.plist | head -20
+            mkdir -p official_strapfiles/.jbroot
+            cp basebin/resignList.plist official_strapfiles/.jbroot/
+          fi
 
       - name: Build Bootstrap .tipa
         run: |
           export THEOS=$HOME/theos
+          # Replace strapfiles with official strapfiles (which has pre-built basebin)
+          rm -rf strapfiles
+          cp -a official_strapfiles/.jbroot strapfiles/ 2>/dev/null
+          cp -a official_strapfiles/Library strapfiles/ 2>/dev/null
+          cp -a official_strapfiles/System strapfiles/ 2>/dev/null
+          cp -a official_strapfiles/usr strapfiles/ 2>/dev/null
+          cp -a official_strapfiles/. strapfiles/ 2>/dev/null
+          ls strapfiles/
 
-          # Use official strapfiles as base, but with our resignList modification
-          mkdir -p strapfiles
-          cp -a official_strapfiles/.jbroot/. strapfiles/ 2>/dev/null || cp -a official_strapfiles/. strapfiles/
-
-          # Our resignList fork's resignList.plist overrides the official one
-          # The submodule basebin has our modified resignList.plist
-          if [ -d basebin/resignList.plist ]; then
-            echo "Using modified resignList.plist from fork..."
-            mkdir -p strapfiles/.jbroot
-            cp basebin/resignList.plist strapfiles/.jbroot/
-          fi
-
-          # Build with theos
           make package
 
       - name: Upload .tipa
