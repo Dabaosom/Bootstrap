@@ -68,18 +68,20 @@ jobs:
           export THEOS=$HOME/theos
 
           # Prepare strapfiles for Xcode resource copying
-          mkdir -p strapfiles/basebin
-          cp -a official_strapfiles/.jbroot/. strapfiles/basebin/ 2>/dev/null
-          cp -a official_strapfiles/Library/. strapfiles/Library/ 2>/dev/null
-          cp -a official_strapfiles/System/. strapfiles/System/ 2>/dev/null
-          cp -a official_strapfiles/usr/. strapfiles/usr/ 2>/dev/null
-          ls -la strapfiles/
+          # xcodebuild runs from Bootstrap/ subdirectory, so put strapfiles there
+          mkdir -p Bootstrap/strapfiles/basebin
+          cp -a official_strapfiles/.jbroot/. Bootstrap/strapfiles/basebin/ 2>/dev/null
+          cp -a official_strapfiles/Library/. Bootstrap/strapfiles/Library/ 2>/dev/null
+          cp -a official_strapfiles/System/. Bootstrap/strapfiles/System/ 2>/dev/null
+          cp -a official_strapfiles/usr/. Bootstrap/strapfiles/usr/ 2>/dev/null
+          ls -la Bootstrap/strapfiles/
 
           # Build Xcode project directly (no theos make hooks)
-          xcodebuild -project Bootstrap.xcodeproj -scheme Bootstrap \
+          # xcodeproj is in Bootstrap/ subdirectory
+          xcodebuild -project Bootstrap/Bootstrap.xcodeproj -scheme Bootstrap \
             CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
             -configuration Debug -arch arm64 -sdk iphoneos \
-            -derivedDataPath .theos/DerivedData \
+            -derivedDataPath Bootstrap/.theos/DerivedData \
             IPHONEOS_DEPLOYMENT_TARGET=15.0
 
       - name: Package .tipa
@@ -89,14 +91,14 @@ jobs:
           mkdir -p "$THEOS_STAGING/Applications/Bootstrap.app"
           mkdir -p "$THEOS_STAGING/Applications/Bootstrap.app/.jbroot"
 
-          # Copy built app bundle
-          cp -a .theos/DerivedData/Build/Products/Debug-iphoneos/Bootstrap.app/. "$THEOS_STAGING/Applications/Bootstrap.app/" 2>/dev/null
+          # Copy built app bundle (from Bootstrap subdir where xcodebuild ran)
+          cp -a Bootstrap/.theos/DerivedData/Build/Products/Debug-iphoneos/Bootstrap.app/. "$THEOS_STAGING/Applications/Bootstrap.app/" 2>/dev/null
           if [ ! -f "$THEOS_STAGING/Applications/Bootstrap.app/Bootstrap" ]; then
-            cp -a .theos/DerivedData/Bootstrap-*.build/Build/Products/Bootstrap.app/. "$THEOS_STAGING/Applications/Bootstrap.app/" 2>/dev/null
+            cp -a Bootstrap/.theos/DerivedData/Bootstrap-*.build/Build/Products/Bootstrap.app/. "$THEOS_STAGING/Applications/Bootstrap.app/" 2>/dev/null
           fi
 
-          # Copy strapfiles into app bundle
-          cp -a strapfiles/.jbroot/. "$THEOS_STAGING/Applications/Bootstrap.app/.jbroot/"
+          # Copy strapfiles into app bundle (strapfiles is in Bootstrap/ subdir)
+          cp -a Bootstrap/strapfiles/.jbroot/. "$THEOS_STAGING/Applications/Bootstrap.app/.jbroot/"
 
           ls -la "$THEOS_STAGING/Applications/Bootstrap.app/"
 
@@ -130,5 +132,4 @@ jobs:
         with:
           name: Bootstrap.tipa
           path: packages/Bootstrap.tipa
-
 
