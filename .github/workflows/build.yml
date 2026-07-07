@@ -21,13 +21,14 @@ jobs:
       - name: Accept Xcode license
         run: sudo xcodebuild -license accept
 
-      - name: Install theos (git clone)
+      - name: Install theos (roothide fork)
         run: |
           export THEOS=$HOME/theos
-          if [ -d "$THEOS" ]; then
-            echo '$THEOS already exists, skipping'
+          if [ -d "$THEOS" ] && [ -f "$THEOS/makefiles/schemes/ros.mk" ]; then
+            echo '$THEOS already has roothide scheme, skipping install'
           else
-            git clone https://github.com/theos/theos.git $THEOS
+            rm -rf "$THEOS"
+            git clone --depth=1 https://github.com/roothide/theos.git $THEOS
           fi
           echo '$THEOS=$THEOS' >> $GITHUB_ENV
           echo '$THEOS/bin' >> $GITHUB_PATH
