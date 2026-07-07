@@ -21,12 +21,16 @@ jobs:
       - name: Accept Xcode license
         run: sudo xcodebuild -license accept
 
-      - name: Install theos
+      - name: Install theos (git clone)
         run: |
           export THEOS=$HOME/theos
-          bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
-          echo "$THEOS/bin" >> $GITHUB_PATH
-          echo "THEOS=$THEOS" >> $GITHUB_ENV
+          if [ -d "$THEOS" ]; then
+            echo '$THEOS already exists, skipping'
+          else
+            git clone https://github.com/theos/theos.git $THEOS
+          fi
+          echo '$THEOS=$THEOS' >> $GITHUB_ENV
+          echo '$THEOS/bin' >> $GITHUB_PATH
 
       - name: Build package
         run: |
