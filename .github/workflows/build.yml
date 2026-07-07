@@ -1,4 +1,4 @@
-name: Build Bootstrap .tipa
+﻿name: Build Bootstrap .tipa
 
 on:
   workflow_dispatch:
@@ -34,17 +34,25 @@ jobs:
           echo 'THEOS=$THEOS' >> $GITHUB_ENV
           echo '$THEOS/bin' >> $GITHUB_PATH
 
-      - name: Prepare strapfiles (official Bootstrap release)
+      - name: Prepare strapfiles (from official Bootstrap.tipa)
         run: |
-          RELEASE_HTML="$(curl -sL https://github.com/roothide/Bootstrap/releases/latest)"
-          STRAP_URL="$(echo "$RELEASE_HTML" | grep -oP 'href="\K[^"]*strapfiles[^"]*\.tar\.zst[^"]*(?=")' | head -1)"
-          echo "Downloading strapfiles from: $STRAP_URL"
-          curl -sL "$STRAP_URL" -o bootstrap-strapfiles.tar.zst
-          ls -lh bootstrap-strapfiles.tar.zst
-          mkdir -p official_strapfiles
-          zstd -d bootstrap-strapfiles.tar.zst -o /tmp/strapfiles.tar
-          tar -xf /tmp/strapfiles.tar -C official_strapfiles/
-          ls official_strapfiles/
+          # Download official Bootstrap.tipa
+          curl -sL "https://github.com/roothide/Bootstrap/releases/download/2.2.1/Bootstrap.tipa" -o Bootstrap.tipa
+          ls -lh Bootstrap.tipa
+
+          # Extract strapfiles from .tipa (it's a zip)
+          mkdir -p official_tipa
+          unzip -q Bootstrap.tipa -d official_tipa/
+          ls official_tipa/
+
+          # Find strapfiles in extracted content
+          # .tipa contains Payload/Applications/Bootstrap.app/strapfiles/
+          STRAPFILES="$(find official_tipa -name strapfiles -type d 2>/dev/null | head -1)"
+          echo "Found strapfiles at: $STRAPFILES"
+          if [ -n "$STRAPFILES" ]; then
+            cp -a "$STRAPFILES/." official_strapfiles/ 2>/dev/null
+          fi
+          ls official_strapfiles/ 2>/dev/null || ls official_tipa/
 
       - name: Patch resignList.plist with siriactionsd
         run: |
@@ -122,3 +130,5 @@ jobs:
         with:
           name: Bootstrap.tipa
           path: packages/Bootstrap.tipa
+
+
