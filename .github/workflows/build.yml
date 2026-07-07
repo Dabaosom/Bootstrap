@@ -36,42 +36,19 @@ jobs:
 
       - name: Download official Bootstrap strapfiles
         run: |
-          # Get latest release info
-          curl -sL https://api.github.com/repos/roothide/Bootstrap/releases/latest > /tmp/release.json
-          TAG=$(node -e "console.log(JSON.parse(require('fs').readFileSync('/tmp/release.json','utf8')).tag_name)")
-          echo "Latest release: $TAG"
-          # Find strapfiles tarball
-          ASSET_URL=$(node -e "const r=JSON.parse(require('fs').readFileSync('/tmp/release.json','utf8')); const a=r.assets.find(x=>x.name.includes('strapfiles')); console.log(a?a.browser_download_url:'');")
-          echo "Downloading: $ASSET_URL"
-          curl -sL "$ASSET_URL" -o bootstrap-strapfiles.tar.zst
-          ls -lh bootstrap-strapfiles.tar.zst
-          mkdir -p official_strapfiles
-          tar -xf bootstrap-strapfiles.tar.zst -C official_strapfiles/ 2>/dev/null || (zstd -d bootstrap-strapfiles.tar.zst -o /tmp/strapfiles.tar && tar -xf /tmp/strapfiles.tar -C official_strapfiles/)
-          ls official_strapfiles/
+          # Fetch release page and extract strapfiles URL
+          RELEASE_HTML="$(curl -sL https://github.com/roothide/Bootstrap/releases/latest)"
+          echo "$RELEASE_HTML" | grep -o 'href="[^"]*strapfiles[^"]*\.tar\.zst[^"]*"' | head -3
 
-      - name: Patch resignList.plist with siriactionsd
-        run: |
-          # Our basebin fork has the modified resignList.plist
-          # Copy it into strapfiles/.jbroot
-          if [ -f basebin/resignList.plist ]; then
-            echo "Using modified resignList.plist from basebin fork:"
-            cat basebin/resignList.plist | head -20
-            mkdir -p official_strapfiles/.jbroot
-            cp basebin/resignList.plist official_strapfiles/.jbroot/
-          fi
+          # Also try the releases API
+          API_RESP="$(curl -sL https://api.github.com/repos/roothide/Bootstrap/releases/latest)"
+          echo "API response length: $(echo "" | wc -c)"
+          echo "$API_RESP" | python3 -c "import sys,json; r=json.load(sys.stdin); [print(a['browser_download_url']) for a in r.get('assets',[]) if 'strapfiles' in a['name']]" 2>/dev/null || echo "Python parse failed"
 
-      - name: Build Bootstrap .tipa
+      - name: Build Bootstrap .tipa (fallback)
         run: |
           export THEOS=$HOME/theos
-          # Replace strapfiles with official strapfiles (which has pre-built basebin)
-          rm -rf strapfiles
-          cp -a official_strapfiles/.jbroot strapfiles/ 2>/dev/null
-          cp -a official_strapfiles/Library strapfiles/ 2>/dev/null
-          cp -a official_strapfiles/System strapfiles/ 2>/dev/null
-          cp -a official_strapfiles/usr strapfiles/ 2>/dev/null
-          cp -a official_strapfiles/. strapfiles/ 2>/dev/null
-          ls strapfiles/
-
+          echo "Using strapfiles from submodule (basebin fork)"
           make package
 
       - name: Upload .tipa
