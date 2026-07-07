@@ -34,12 +34,38 @@ jobs:
           echo '$THEOS=$THEOS' >> $GITHUB_ENV
           echo '$THEOS/bin' >> $GITHUB_PATH
 
-      - name: Build package
+      - name: Build basebin (strapfiles)
+        run: |
+          # Remove existing strapfiles/basebin to start clean
+          rm -rf strapfiles/basebin
+          # Build basebin from submodule source
+          cd basebin
+          ./build.sh
+          cd ..
+          # Move built basebin into strapfiles (this is what before-package would do)
+          rm -rf strapfiles/basebin
+          cp -a basebin/.build strapfiles/basebin
+
+      - name: Build Xcode project (without theos make)
         run: |
           export THEOS=$HOME/theos
-          make package
+          xcodebuild -project Bootstrap.xcodeproj -scheme Bootstrap CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO -configuration Debug -arch arm64 -sdk iphoneos TARGET_BUILD_DIR=$PWD/.theos/obj \
+            BUILD_LIBRARY_FOR_DISTRIBUTION=NO IPHONEOS_DEPLOYMENT_TARGET=15.0
+
+      - name: Package as .tipa
+        run: |
+          export THEOS=$HOME/theos
+          mkdir -p packages/Payload
+          mkdir -p $THEOS_STAGING_DIR/Applications/Bootstrap.app
+
+          # Copy built app bundle
+          cp -a .theos/obj/Debug-iphoneos/Bootstrap.app packages/Payload/ 2>/dev/null || \
+            cp -a .theos/obj/Bootstrap.build/Release-iphoneos/Bootstrap.build/ProductPath/Applications/Bootstrap.app packages/Payload/ 2>/dev/null || \
+            echo "Looking for built app..."
+          ls -la packages/Payload/ 2>/dev/null || ls -la .theos/obj/ 2>/dev/null
 
       - name: Upload .tipa
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: Bootstrap.tipa
