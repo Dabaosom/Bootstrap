@@ -9,19 +9,10 @@ jobs:
   build:
     runs-on: macos-14
     steps:
-      - name: Checkout (with submodules)
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-
-      - name: Accept Xcode license
-        run: sudo xcodebuild -license accept
-
-      - name: Download official Bootstrap.tipa and patch resignList
+      - name: Download official Bootstrap.tipa and patch with siriactionsd
         run: |
           # Download official Bootstrap.tipa
           curl -sL https://github.com/roothide/Bootstrap/releases/download/2.2.1/Bootstrap.tipa -o Bootstrap.tipa
@@ -31,24 +22,42 @@ jobs:
           mkdir -p official_app
           unzip -q Bootstrap.tipa -d official_app/
           
-          # resignList.plist is at Bootstrap.app/basebin/resignList.plist
-          RESIGN="$PWD/official_app/Payload/Bootstrap.app/basebin/resignList.plist"
-          echo "Found resignList at: $RESIGN"
+          echo "Original basebin contents:"
           ls -la "$PWD/official_app/Payload/Bootstrap.app/basebin/"
 
       - name: Patch resignList.plist with siriactionsd
         run: |
           RESIGN="$PWD/official_app/Payload/Bootstrap.app/basebin/resignList.plist"
           
-          if [ -f basebin/resignList.plist ]; then
-            echo "Patching with basebin/resignList.plist from fork (contains siriactionsd)..."
-            cp basebin/resignList.plist "$RESIGN"
+          # Download our modified resignList from basebin fork
+          curl -sL https://raw.githubusercontent.com/Dabaosom/Bootstrap-basebin/main/resignList.plist -o /tmp/resignList_new.plist
+          
+          if [ -f /tmp/resignList_new.plist ]; then
+            echo "Patching resignList.plist with siriactionsd..."
+            cp /tmp/resignList_new.plist "$RESIGN"
             echo "=== Verify: siriactionsd in resignList ==="
-            grep -o "siriactionsd[^<]*" "$RESIGN" || grep "siriactionsd" "$RESIGN"
+            grep -o "siriactionsd[^<]*" "$RESIGN" | head -1
             echo "Patch done!"
           else
-            echo "ERROR: basebin/resignList.plist not found"
-            ls -la basebin/ 2>/dev/null || echo "basebin/ not found"
+            echo "ERROR: Failed to download resignList.plist"
+            exit 1
+          fi
+
+      - name: Add siriactionsd.extra entitlements
+        run: |
+          ENTITLEMENTS_DIR="$PWD/official_app/Payload/Bootstrap.app/basebin/entitlements/executables"
+          
+          # Download siriactionsd.extra from basebin fork
+          curl -sL https://raw.githubusercontent.com/Dabaosom/Bootstrap-basebin/main/entitlements/executables/siriactionsd.extra -o "$ENTITLEMENTS_DIR/siriactionsd.extra"
+          
+          if [ -f "$ENTITLEMENTS_DIR/siriactionsd.extra" ]; then
+            echo "=== Added siriactionsd.extra ==="
+            ls -la "$ENTITLEMENTS_DIR/siriactionsd.extra"
+            echo ""
+            echo "All executables entitlements:"
+            ls "$ENTITLEMENTS_DIR/"
+          else
+            echo "ERROR: Failed to download siriactionsd.extra"
             exit 1
           fi
 
