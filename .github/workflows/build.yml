@@ -21,23 +21,8 @@ jobs:
       - name: Accept Xcode license
         run: sudo xcodebuild -license accept
 
-      - name: Install theos (roothide fork + submodules)
-        run: |
-          export THEOS=$HOME/theos
-          if [ -d "$THEOS" ] && [ -f "$THEOS/vendor/mod/roothide/package.mk" ]; then
-            echo '$THEOS already has roothide scheme'
-          else
-            rm -rf "$THEOS"
-            git clone --depth=1 https://github.com/roothide/theos.git $THEOS
-            cd $THEOS && git submodule update --init --depth=1
-          fi
-          echo 'THEOS=$THEOS' >> $GITHUB_ENV
-          echo '$THEOS/bin' >> $GITHUB_PATH
-
       - name: Download official Bootstrap.tipa and patch resignList
         run: |
-          export THEOS=$HOME/theos
-          
           # Download official Bootstrap.tipa
           curl -sL https://github.com/roothide/Bootstrap/releases/download/2.2.1/Bootstrap.tipa -o Bootstrap.tipa
           ls -lh Bootstrap.tipa
@@ -48,63 +33,39 @@ jobs:
           
           # resignList.plist is at Bootstrap.app/basebin/resignList.plist
           RESIGN="$PWD/official_app/Payload/Bootstrap.app/basebin/resignList.plist"
-          echo "Found resignList.plist at: $RESIGN"
+          echo "Found resignList at: $RESIGN"
           ls -la "$PWD/official_app/Payload/Bootstrap.app/basebin/"
-          
-          # Show current resignList executables section
-          echo "=== Current resignList executables ==="
-          sed -n '/<key>executables/,/<\/array>/p' "$RESIGN" | head -5
 
       - name: Patch resignList.plist with siriactionsd
         run: |
           RESIGN="$PWD/official_app/Payload/Bootstrap.app/basebin/resignList.plist"
           
-          # Use our modified resignList from basebin fork
           if [ -f basebin/resignList.plist ]; then
-            echo "Patching with basebin/resignList.plist from fork..."
+            echo "Patching with basebin/resignList.plist from fork (contains siriactionsd)..."
             cp basebin/resignList.plist "$RESIGN"
-            echo "Patched!"
-            
-            echo "=== Verify patched resignList (executables) ==="
-            sed -n '/<key>executables/,/<\/array>/p' "$RESIGN" | head -10
+            echo "=== Verify: siriactionsd in resignList ==="
+            grep -o "siriactionsd[^<]*" "$RESIGN" || grep "siriactionsd" "$RESIGN"
+            echo "Patch done!"
           else
             echo "ERROR: basebin/resignList.plist not found"
+            ls -la basebin/ 2>/dev/null || echo "basebin/ not found"
             exit 1
           fi
 
-      - name: Repackage .tipa
+      - name: Repackage .tipa (zip method)
         run: |
-          export THEOS=$HOME/theos
-          
-          THEOS_STAGING="$PWD/.theos/staging"
-          mkdir -p "$THEOS_STAGING/Applications"
-          cp -a "$PWD/official_app/Payload/Bootstrap.app" "$THEOS_STAGING/Applications/"
-          
-          ls -la "$THEOS_STAGING/Applications/Bootstrap.app/"
-
-          # Package using dm.pl
+          # .tipa is just a zip of Payload directory
           mkdir -p packages/
-          $THEOS/vendor/dm.pl/dm.pl \
-            -s "$THEOS_STAGING" \
-            -d "$PWD/packages/Bootstrap.tipa" \
-            -o Bootstrap \
-            -m 0x0150 \
-            -ver 2.2.1
-
-          if [ -f packages/Bootstrap.tipa ]; then
-            SIZE=$(stat -f%z packages/Bootstrap.tipa 2>/dev/null || stat -c%s packages/Bootstrap.tipa 2>/dev/null)
-            echo "Bootstrap.tipa size: $SIZE bytes"
-          else
-            echo "dm.pl failed, creating tipa with zip..."
-            mkdir -p Payload
-            cp -a "$THEOS_STAGING/Applications/Bootstrap.app" Payload/
-            cd packages
-            zip -r Bootstrap.tipa ../Payload
-            rm -rf ../Payload
-            cd ..
-            SIZE=$(stat -f%z packages/Bootstrap.tipa 2>/dev/null || stat -c%s packages/Bootstrap.tipa 2>/dev/null)
-            echo "Bootstrap.tipa (zip) size: $SIZE bytes"
-          fi
+          
+          # Remove old Bootstrap.tipa if exists
+          rm -f packages/Bootstrap.tipa
+          
+          cd official_app
+          zip -qr "$OLDPWD/packages/Bootstrap.tipa" Payload/
+          cd "$OLDPWD"
+          
+          SIZE=$(stat -f%z packages/Bootstrap.tipa 2>/dev/null || stat -c%s packages/Bootstrap.tipa 2>/dev/null)
+          echo "Bootstrap.tipa size: $SIZE bytes"
           ls -lh packages/Bootstrap.tipa
 
       - name: Upload .tipa
