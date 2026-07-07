@@ -45,39 +45,30 @@ jobs:
           # Extract .tipa (it's a zip)
           mkdir -p official_app
           unzip -q Bootstrap.tipa -d official_app/
-          ls official_app/
-          ls official_app/Payload/Bootstrap.app/
-
-          # Check if resignList.plist is inside the app bundle
-          RESIGN="$PWD/official_app/Payload/Bootstrap.app/strapfiles/.jbroot/resignList.plist"
-          if [ -f "$RESIGN" ]; then
-            echo "Found resignList.plist at: $RESIGN"
-            echo "Contents:"
-            cat "$RESIGN"
-          else
-            echo "resignList.plist not found at $RESIGN"
-            find official_app -name "resignList.plist" -o -name "*.plist" | head -20
-          fi
+          
+          # resignList.plist is at Bootstrap.app/basebin/resignList.plist
+          RESIGN="$PWD/official_app/Payload/Bootstrap.app/basebin/resignList.plist"
+          echo "Found resignList.plist at: $RESIGN"
+          ls -la "$PWD/official_app/Payload/Bootstrap.app/basebin/"
+          
+          # Show current resignList executables section
+          echo "=== Current resignList executables ==="
+          sed -n '/<key>executables/,/<\/array>/p' "$RESIGN" | head -5
 
       - name: Patch resignList.plist with siriactionsd
         run: |
-          RESIGN="$PWD/official_app/Payload/Bootstrap.app/strapfiles/.jbroot/resignList.plist"
-          if [ -f "$RESIGN" ]; then
-            echo "Patching resignList.plist with siriactionsd..."
+          RESIGN="$PWD/official_app/Payload/Bootstrap.app/basebin/resignList.plist"
+          
+          # Use our modified resignList from basebin fork
+          if [ -f basebin/resignList.plist ]; then
+            echo "Patching with basebin/resignList.plist from fork..."
+            cp basebin/resignList.plist "$RESIGN"
+            echo "Patched!"
             
-            # Use our modified resignList from basebin fork
-            if [ -f basebin/resignList.plist ]; then
-              cp basebin/resignList.plist "$RESIGN"
-              echo "Patched with basebin/resignList.plist"
-            else
-              echo "basebin/resignList.plist not found"
-              exit 1
-            fi
-            
-            echo "Verify patched resignList:"
-            cat "$RESIGN"
+            echo "=== Verify patched resignList (executables) ==="
+            sed -n '/<key>executables/,/<\/array>/p' "$RESIGN" | head -10
           else
-            echo "ERROR: resignList.plist not found"
+            echo "ERROR: basebin/resignList.plist not found"
             exit 1
           fi
 
@@ -85,15 +76,12 @@ jobs:
         run: |
           export THEOS=$HOME/theos
           
-          # Create staging directory
           THEOS_STAGING="$PWD/.theos/staging"
           mkdir -p "$THEOS_STAGING/Applications"
-          
-          # Copy patched app bundle to staging
           cp -a "$PWD/official_app/Payload/Bootstrap.app" "$THEOS_STAGING/Applications/"
           
           ls -la "$THEOS_STAGING/Applications/Bootstrap.app/"
-          
+
           # Package using dm.pl
           mkdir -p packages/
           $THEOS/vendor/dm.pl/dm.pl \
@@ -103,7 +91,6 @@ jobs:
             -m 0x0150 \
             -ver 2.2.1
 
-          # Check result
           if [ -f packages/Bootstrap.tipa ]; then
             SIZE=$(stat -f%z packages/Bootstrap.tipa 2>/dev/null || stat -c%s packages/Bootstrap.tipa 2>/dev/null)
             echo "Bootstrap.tipa size: $SIZE bytes"
