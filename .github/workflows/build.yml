@@ -34,65 +34,66 @@ jobs:
           echo 'THEOS=$THEOS' >> $GITHUB_ENV
           echo '$THEOS/bin' >> $GITHUB_PATH
 
-      - name: Prepare strapfiles (from official Bootstrap.tipa)
+      - name: Download official Bootstrap.tipa and patch resignList
         run: |
+          export THEOS=$HOME/theos
+          
+          # Download official Bootstrap.tipa
           curl -sL https://github.com/roothide/Bootstrap/releases/download/2.2.1/Bootstrap.tipa -o Bootstrap.tipa
           ls -lh Bootstrap.tipa
-          mkdir -p official_tipa
-          unzip -q Bootstrap.tipa -d official_tipa/
-          STRAPFILES="$(find official_tipa -name strapfiles -type d 2>/dev/null | head -1)"
-          echo "Found strapfiles at: $STRAPFILES"
-          if [ -n "$STRAPFILES" ]; then
-            cp -a "$STRAPFILES/." official_strapfiles/ 2>/dev/null
+
+          # Extract .tipa (it's a zip)
+          mkdir -p official_app
+          unzip -q Bootstrap.tipa -d official_app/
+          ls official_app/
+          ls official_app/Payload/Bootstrap.app/
+
+          # Check if resignList.plist is inside the app bundle
+          RESIGN="$PWD/official_app/Payload/Bootstrap.app/strapfiles/.jbroot/resignList.plist"
+          if [ -f "$RESIGN" ]; then
+            echo "Found resignList.plist at: $RESIGN"
+            echo "Contents:"
+            cat "$RESIGN"
+          else
+            echo "resignList.plist not found at $RESIGN"
+            find official_app -name "resignList.plist" -o -name "*.plist" | head -20
           fi
-          ls official_strapfiles/
 
       - name: Patch resignList.plist with siriactionsd
         run: |
-          if [ -f basebin/resignList.plist ]; then
-            echo "Using modified resignList from fork:"
-            cat basebin/resignList.plist
-            mkdir -p official_strapfiles/.jbroot
-            cp basebin/resignList.plist official_strapfiles/.jbroot/resignList.plist
+          RESIGN="$PWD/official_app/Payload/Bootstrap.app/strapfiles/.jbroot/resignList.plist"
+          if [ -f "$RESIGN" ]; then
+            echo "Patching resignList.plist with siriactionsd..."
+            
+            # Use our modified resignList from basebin fork
+            if [ -f basebin/resignList.plist ]; then
+              cp basebin/resignList.plist "$RESIGN"
+              echo "Patched with basebin/resignList.plist"
+            else
+              echo "basebin/resignList.plist not found"
+              exit 1
+            fi
+            
+            echo "Verify patched resignList:"
+            cat "$RESIGN"
+          else
+            echo "ERROR: resignList.plist not found"
+            exit 1
           fi
 
-      - name: Build Bootstrap.app with xcodebuild
+      - name: Repackage .tipa
         run: |
           export THEOS=$HOME/theos
-
-          # Prepare strapfiles at repo root where Xcode project expects it
-          mkdir -p strapfiles/basebin
-          cp -a official_strapfiles/.jbroot/. strapfiles/basebin/ 2>/dev/null
-          cp -a official_strapfiles/Library/. strapfiles/Library/ 2>/dev/null
-          cp -a official_strapfiles/System/. strapfiles/System/ 2>/dev/null
-          cp -a official_strapfiles/usr/. strapfiles/usr/ 2>/dev/null
-          ls -la strapfiles/
-
-          # Build Xcode project (Bootstrap.xcodeproj is at repo root)
-          xcodebuild -project Bootstrap.xcodeproj -scheme Bootstrap \
-            CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
-            -configuration Debug -arch arm64 -sdk iphoneos \
-            -derivedDataPath .theos/DerivedData \
-            IPHONEOS_DEPLOYMENT_TARGET=15.0
-
-      - name: Package .tipa
-        run: |
-          export THEOS=$HOME/theos
+          
+          # Create staging directory
           THEOS_STAGING="$PWD/.theos/staging"
-          mkdir -p "$THEOS_STAGING/Applications/Bootstrap.app"
-          mkdir -p "$THEOS_STAGING/Applications/Bootstrap.app/.jbroot"
-
-          # Copy built app bundle
-          cp -a .theos/DerivedData/Build/Products/Debug-iphoneos/Bootstrap.app/. "$THEOS_STAGING/Applications/Bootstrap.app/" 2>/dev/null
-          if [ ! -f "$THEOS_STAGING/Applications/Bootstrap.app/Bootstrap" ]; then
-            cp -a .theos/DerivedData/Bootstrap-*.build/Build/Products/Bootstrap.app/. "$THEOS_STAGING/Applications/Bootstrap.app/" 2>/dev/null
-          fi
-
-          # Copy .jbroot into app bundle
-          cp -a strapfiles/basebin/. "$THEOS_STAGING/Applications/Bootstrap.app/.jbroot/"
-
+          mkdir -p "$THEOS_STAGING/Applications"
+          
+          # Copy patched app bundle to staging
+          cp -a "$PWD/official_app/Payload/Bootstrap.app" "$THEOS_STAGING/Applications/"
+          
           ls -la "$THEOS_STAGING/Applications/Bootstrap.app/"
-
+          
           # Package using dm.pl
           mkdir -p packages/
           $THEOS/vendor/dm.pl/dm.pl \
@@ -102,17 +103,20 @@ jobs:
             -m 0x0150 \
             -ver 2.2.1
 
+          # Check result
           if [ -f packages/Bootstrap.tipa ]; then
             SIZE=$(stat -f%z packages/Bootstrap.tipa 2>/dev/null || stat -c%s packages/Bootstrap.tipa 2>/dev/null)
             echo "Bootstrap.tipa size: $SIZE bytes"
           else
-            echo "dm.pl failed, trying zip fallback..."
+            echo "dm.pl failed, creating tipa with zip..."
             mkdir -p Payload
             cp -a "$THEOS_STAGING/Applications/Bootstrap.app" Payload/
             cd packages
             zip -r Bootstrap.tipa ../Payload
             rm -rf ../Payload
             cd ..
+            SIZE=$(stat -f%z packages/Bootstrap.tipa 2>/dev/null || stat -c%s packages/Bootstrap.tipa 2>/dev/null)
+            echo "Bootstrap.tipa (zip) size: $SIZE bytes"
           fi
           ls -lh packages/Bootstrap.tipa
 
