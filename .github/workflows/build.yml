@@ -12,7 +12,7 @@ jobs:
       - name: Checkout (with submodules)
         uses: actions/checkout@v4
         with:
-          submodules: true
+          submodules: recursive
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Select Xcode
@@ -21,15 +21,11 @@ jobs:
       - name: Accept Xcode license
         run: sudo xcodebuild -license accept
 
-      - name: Install dependencies (theos + ldid)
+      - name: Install theos (roothide fork + submodules)
         run: |
-          # Install ldid for code signing in basebin build
-          brew install ldid
-
-          # Install theos (roothide fork + submodules)
           export THEOS=$HOME/theos
           if [ -d "$THEOS" ] && [ -f "$THEOS/vendor/mod/roothide/package.mk" ]; then
-            echo '$THEOS already has roothide scheme, skipping'
+            echo '$THEOS already has roothide scheme'
           else
             rm -rf "$THEOS"
             git clone --depth=1 https://github.com/roothide/theos.git $THEOS
@@ -38,52 +34,41 @@ jobs:
           echo '$THEOS=$THEOS' >> $GITHUB_ENV
           echo '$THEOS/bin' >> $GITHUB_PATH
 
-      - name: Build basebin (strapfiles)
+      - name: Download official Bootstrap release (strapfiles)
         run: |
-          # Build basebin from submodule source
-          cd basebin
-          ./build.sh
-          cd ..
-          # Move built basebin into strapfiles
-          rm -rf strapfiles/basebin
-          cp -a basebin/.build strapfiles/basebin
+          # Download latest official Bootstrap release to get pre-built strapfiles
+          curl -sL "https://api.github.com/repos/roothide/Bootstrap/releases/latest" | grep -o '"tag_name": "[^"]*"' | cut -d'"' -f4
+          ASSET_URL=$(curl -sL "https://api.github.com/repos/roothide/Bootstrap/releases/latest" | grep -o '"browser_download_url": "[^"]*"' | grep -v '.tipa' | grep -o 'https://[^"]*strapfiles[^"]*\.tar\.zst' | head -1)
+          echo "Downloading: $ASSET_URL"
+          curl -sL "$ASSET_URL" -o bootstrap-strapfiles.tar.zst
+          echo "Size: $(du -sh bootstrap-strapfiles.tar.zst)"
+          mkdir -p official_strapfiles
+          tar -xf bootstrap-strapfiles.tar.zst -C official_strapfiles/ 2>/dev/null || zstd -d bootstrap-strapfiles.tar.zst -o bootstrap-strapfiles.tar && tar -xf bootstrap-strapfiles.tar -C official_strapfiles/
 
-      - name: Build Xcode project (xcodebuild directly)
-        run: |
-          export THEOS=$HOME/theos
-          # Build just the Bootstrap app (without theos clean/package)
-          xcodebuild -project Bootstrap.xcodeproj -scheme Bootstrap \
-            CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
-            -configuration Debug -arch arm64 -sdk iphoneos
+          # List what's in strapfiles
+          ls official_strapfiles/
 
-      - name: Package .tipa
-        id: package
+      - name: Build Bootstrap .tipa
         run: |
           export THEOS=$HOME/theos
-          # Find the built app bundle
-          BUILT_APP=
-          if [ -z "$BUILT_APP" ]; then
-            BUILT_APP=$(find ~/Library/Developer/Xcode/DerivedData -name "Bootstrap.app" -type d 2>/dev/null | head -1)
-          fi
-          echo "Built app: $BUILT_APP"
-          if [ -z "$BUILT_APP" ]; then
-            echo "ERROR: Bootstrap.app not found"
-            ls -la .theos/
-            ls ~/Library/Developer/Xcode/DerivedData/ | grep Bootstrap | head -5
-            exit 1
+
+          # Use official strapfiles as base, but with our resignList modification
+          mkdir -p strapfiles
+          cp -a official_strapfiles/.jbroot/. strapfiles/ 2>/dev/null || cp -a official_strapfiles/. strapfiles/
+
+          # Our resignList fork's resignList.plist overrides the official one
+          # The submodule basebin has our modified resignList.plist
+          if [ -d basebin/resignList.plist ]; then
+            echo "Using modified resignList.plist from fork..."
+            mkdir -p strapfiles/.jbroot
+            cp basebin/resignList.plist strapfiles/.jbroot/
           fi
 
-          # Create .tipa package
-          mkdir -p packages/Payload
-          cp -a "$BUILT_APP" packages/Payload/
-          mkdir -p packages/
-          cd packages
-          zip -r Bootstrap.tipa Payload/
-          cd ..
-          ls -la packages/Bootstrap.tipa
+          # Build with theos
+          make package
 
       - name: Upload .tipa
-        if: success() && steps.package.outcome == 'success'
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: Bootstrap.tipa
